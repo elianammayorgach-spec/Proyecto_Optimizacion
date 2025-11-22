@@ -87,10 +87,10 @@ El proyecto también usa:
 Requisitos mínimos recomendados:
 
   Hardware:
-    Procesador 2 núcleos (Intel i5 o equivalente)
-    8 GB de RAM (recomendado 16 GB para GAMS)
-    2 GB de espacio libre en disco
-    Resolución mínima de pantalla 1366x768
+    - Procesador 2 núcleos (Intel i5 o equivalente)
+    - 8 GB de RAM (recomendado 16 GB para GAMS)
+    - 2 GB de espacio libre en disco
+    - Resolución mínima de pantalla 1366x768
 
   Software:
     Python 3.8 o superior
