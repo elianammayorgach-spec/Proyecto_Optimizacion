@@ -19,27 +19,31 @@ Proyecto/
 │
 ├── 114479_Informe_Tecnico.pdf
 ├── README.txt
+
 │
 ├── Problema 1/
 │ ├── Problem_1.py
+
 │
 ├── Problema 2/
 │ ├── Problem_2.gms
 │ ├── Problem_2.hint
 │ ├── Problem_2.lst
 │ ├── HINT_SETUP.zip (instalador del programa HINT)
+
 │
 ├── Problema 3/
 │ ├── Problem_3.py
 │ ├── Problem_3-1.py
 │ ├── Diagrama de Gantt de Producción.pdf
+
 │
 └── Problema 4/
 ├── Problem_4.py
 ├── Diagrama de Flujo de Proceso.pdf
 
 
-2. LIBRERÍAS NECESARIAS (PYTHON)
+3. LIBRERÍAS NECESARIAS (PYTHON)
 
 Numericas y Científicas:
 
