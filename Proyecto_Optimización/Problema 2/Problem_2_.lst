@@ -1,0 +1,1472 @@
+GAMS 51.4.0  91cb996b Nov 10, 2025          WEX-WEI x86 64bit/MS Windows - 11/21/25 15:45:27 Page 1
+G e n e r a l   A l g e b r a i c   M o d e l i n g   S y s t e m
+C o m p i l a t i o n
+
+
+   3   
+   4  option limrow = 0;
+   5  option limcol = 0;
+   6  option solprint = on;
+   7  option sysout = off;
+   8   
+   9  option LP   = CPLEX;
+  10  option MIP  = CPLEX;
+  11  option NLP  = CONOPT;
+  12  option MINLP= DICOPT;
+  13  option OPTCR= 0;
+  14   
+GAMS 51.4.0  91cb996b Nov 10, 2025          WEX-WEI x86 64bit/MS Windows - 11/21/25 15:45:27 Page 2
+Problem 2 - HEN Optimization (Biodiesel 10,000 ton/y)
+C o m p i l a t i o n
+
+
+  16   
+       
+      Problem 2: Process Optimization Project           
+      Red de Intercambiadores de Calor - Planta de Biodiesel
+      Professor: Francisco Javier Vasquez Vasquez       
+      EMMCH
+       
+  25   
+  26  Sets
+  27      h   Hot streams       /H1*H4/
+  28      c   Cold streams      /C1*C4/ ;
+  29   
+  30  Parameters
+  31      Tin_h(h)        Temperatura inicial caliente (K)
+  32      Tout_h(h)       Temperatura objetivo caliente (K)
+  33      mcp_h(h)        Capacidad calorífica caliente (kW*K^-1)
+  34      Tin_c(c)        Temperatura inicial  fría (K)
+  35      Tout_c(c)       Temperatura objetivo fría (K)
+  36      mcp_c(c)        Capacidad calorífica fría (kW*K^-1)
+  37      DTmin           Delta T mínima (K)
+  38      U               Coeficiente global de transferencia (kW*m2*K^-1)))
+  39      alpha           Factor de anualización
+  40      hours           Horas de operación por año
+  41      costSteam_kWh   Costo térmico del vapor (USD*kWh^-1)
+  42      costCW_kWh      Costo térmico del agua (USD*kWh^-1)
+  43      MQ(h,c)         Big-M para calor (kW)
+  44      MA(h,c)         Big-M para área (m2)
+  45      MDelta          Big-M factibilidad térmica (K)
+  46      TotalColdLoad   Carga total fría (kW) ;
+  47   
+  48  DTmin   = 10;
+  49  U       = 800;
+  50  alpha   = 0.15;
+  51  hours   = 8000;
+  52  MDelta  = 1000;
+  53   
+  54  * Costos térmicos
+  55  costSteam_kWh = 25 / 596;
+  56  costCW_kWh    = 0.05 / 11.63;
+  57   
+  58  * Datos de corrientes (biodiesel)
+  59  Tin_h('H1')  = 448.15;     Tout_h('H1') = 363.15;    mcp_h('H1') = 2.309495;
+  60  Tin_h('H2')  = 363.15;     Tout_h('H2') = 323.15;    mcp_h('H2') = 11.925;
+  61  Tin_h('H3')  = 391.15;     Tout_h('H3') = 323.15;    mcp_h('H3') = 3.764706;
+  62  Tin_h('H4')  = 493.15;     Tout_h('H4') = 355.15;    mcp_h('H4') = 110.9203;
+  63   
+  64  Tin_c('C1')  = 298.15;     Tout_c('C1') = 330.15;    mcp_c('C1') = 1.372881;
+  65  Tin_c('C2')  = 355.15;     Tout_c('C2') = 493.15;    mcp_c('C2') = 15.24638;
+  66  Tin_c('C3')  = 323.15;     Tout_c('C3') = 373.15;    mcp_c('C3') = 1.7;
+  67  Tin_c('C4')  = 330.15;     Tout_c('C4') = 400.15;    mcp_c('C4') = 221.5641;
+  68   
+  69  * Big-M por disponibilidad máxima
+  70  MQ(h,c) = min( mcp_h(h)*(Tin_h(h)-Tout_h(h)), mcp_c(c)*(Tout_c(c)-Tin_c(c)) );
+  71  MA(h,c) = MQ(h,c) / (U*DTmin);
+  72   
+  73  * Carga fría total
+  74  TotalColdLoad = sum(c, mcp_c(c)*(Tout_c(c)-Tin_c(c)));
+  75   
+  76  * Cobertura mínima por corrientes frías (empuja intercambio en corrientes pequeñas)
+  77  Parameter gammaC(c)  Fracción mínima interna por corriente fría;
+  78  gammaC(c)      = 0;
+  79  gammaC('C1')   = 0.50;
+  80  gammaC('C3')   = 0.90;
+  81  gammaC('C2')   = 0.00;
+  82  gammaC('C4')   = 0.95;
+  83   
+  84  Variables
+  85      Q(h,c)              Intercambio de calor (kW)
+  86      A(h,c)              Área de transferencia (m2)
+  87      z(h,c)              Match binario
+  88      QSteam(c)           Calentamiento externo frío (kW)
+  89      QCW(h)              Enfriamiento caliente (kW)
+  90      Cost                Costo total (USD)*año^-1)
+  91      Cost_CAPEX_Fijo     Componente CAPEX fijo (USD*año^-1)
+  92      Cost_CAPEX_Area     Componente CAPEX por área (USD*año^-1)
+  93      Cost_OPEX_Steam     Componente OPEX vapor (USD*año^-1)
+  94      Cost_OPEX_CW        Componente OPEX agua (USD*año^-1)
+  95      Qsum                Suma de intercambio interno (kW)
+  96      CostStage1          Objetivo etapa 1 (proxy) ;
+  97   
+  98  Positive Variables Q, A, QSteam, QCW;
+  99  Binary Variables z;
+ 100   
+ 101  Parameter RHSHold;
+ 102   
+ 103  Equations
+ 104      HeatBalance_H(h)
+ 105      HeatBalance_C(c)
+ 106      AreaDef(h,c)
+ 107      Link_Q(h,c)
+ 108      Link_A(h,c)
+ 109      NoEmptyMatch(h,c)
+ 110      FeasHotIn_ColdOut(h,c)
+ 111      FeasHotOut_ColdIn(h,c)
+ 112      DefCost_CAPEX_Fijo
+ 113      DefCost_CAPEX_Area
+ 114      DefCost_OPEX_Steam
+ 115      DefCost_OPEX_CW
+ 116      Objective
+ 117      MinRecPerCold(c)
+ 118      ObjMaxQ
+ 119      HoldInternal;
+ 120   
+ 121  * Balances de energía
+ 122  HeatBalance_H(h)..     sum(c, Q(h,c)) + QCW(h) =E= mcp_h(h)*(Tin_h(h)-Tout_h(h));
+ 123  HeatBalance_C(c)..     sum(h, Q(h,c)) + QSteam(c) =E= mcp_c(c)*(Tout_c(c)-Tin_c(c));
+ 124   
+ 125  * Área (con ΔTmin simplificado; conserva A**0.8 en costo)
+ 126  AreaDef(h,c)..         A(h,c) =E= Q(h,c) / (U * DTmin);
+ 127   
+ 128  * Enlaces binario–continuo
+ 129  Link_Q(h,c)..          Q(h,c) =L= MQ(h,c) * z(h,c);
+ 130  Link_A(h,c)..          A(h,c) =L= MA(h,c) * z(h,c);
+ 131   
+ 132  * Evitar matches vacíos
+ 133  NoEmptyMatch(h,c)..    Q(h,c) =G= 1e-3*z(h,c);
+ 134   
+ 135  * Factibilidad térmica por extremos (contracorriente)
+ 136  FeasHotIn_ColdOut(h,c).. Tin_h(h) - Tout_c(c) =G= DTmin - MDelta*(1 - z(h,c));
+ 137  FeasHotOut_ColdIn(h,c).. Tout_h(h) - Tin_c(c) =G= DTmin - MDelta*(1 - z(h,c));
+ 138   
+ 139  * Costos (manteniendo A**0.8)
+ 140  DefCost_CAPEX_Fijo..   Cost_CAPEX_Fijo =E= sum((h,c), alpha*15000*z(h,c));
+ 141  DefCost_CAPEX_Area..   Cost_CAPEX_Area =E= sum((h,c), alpha*500*(A(h,c)**0.8));
+ 142  DefCost_OPEX_Steam..   Cost_OPEX_Steam =E= hours*costSteam_kWh*sum(c, QSteam(c));
+ 143  DefCost_OPEX_CW..      Cost_OPEX_CW    =E= hours*costCW_kWh   *sum(h, QCW(h));
+ 144   
+ 145  * Objetivo etapa 2 (costo total)
+ 146  Objective..            Cost =E= Cost_CAPEX_Fijo + Cost_CAPEX_Area + Cost_OPEX_Steam + Cost_OPEX_CW;
+ 147   
+ 148  * Cobertura mínima por corriente fría
+ 149  MinRecPerCold(c)..     sum(h, Q(h,c)) =G= gammaC(c) * mcp_c(c) * (Tout_c(c) - Tin_c(c));
+ 150   
+ 151  * Objetivo etapa 1: maximizar intercambio interno
+ 152  ObjMaxQ..              Qsum =E= sum((h,c), Q(h,c));
+ 153   
+ 154  Model MaxRec / HeatBalance_H, HeatBalance_C, AreaDef, Link_Q, Link_A, NoEmptyMatch,
+ 155                FeasHotIn_ColdOut, FeasHotOut_ColdIn, MinRecPerCold, ObjMaxQ /;
+ 156   
+ 157   
+ 158  Model Problem2 / HeatBalance_H, HeatBalance_C, AreaDef, Link_Q, Link_A, NoEmptyMatch,
+ 159                   FeasHotIn_ColdOut, FeasHotOut_ColdIn, MinRecPerCold,
+ 160                   DefCost_CAPEX_Fijo, DefCost_CAPEX_Area, DefCost_OPEX_Steam, DefCost_OPEX_CW,
+ 161                   Objective, HoldInternal /;
+ 162   
+ 163   
+ 164  * Anexos
+ 165  Q.up(h,c)      = MQ(h,c);
+ 166  A.up(h,c)      = MA(h,c);
+ 167  QSteam.up(c)   = mcp_c(c)*(Tout_c(c)-Tin_c(c));
+ 168  QCW.up(h)      = mcp_h(h)*(Tin_h(h)-Tout_h(h));
+ 169   
+ 170  * Semillas para guiar el MINLP
+ 171  z.L('H4','C4') = 1;   Q.L('H4','C4') = 2000;
+ 172  z.L('H3','C1') = 1;   Q.L('H3','C1') =   40;
+ 173  z.L('H1','C3') = 1;   Q.L('H1','C3') =   60;
+ 174   
+ 175  * ===== Etapa 1: Maximizar Q interno =====
+ 176  Solve MaxRec using MINLP maximizing Qsum;
+ 177   
+ 178  * Capturar el nivel de intercambio interno alcanzado
+ 179  Scalar QTarget, holdFrac;
+ 180  QTarget  = sum((h,c), Q.l(h,c));
+ 181  holdFrac = 0.95;
+ 182   
+ 183  * Añadir restricción para etapa 2 (mantener intercambio interno elevado)
+ 184  Equations HoldInternal;
+ 185  HoldInternal..  sum((h,c), Q(h,c)) =G= RHSHold;
+ 186   
+ 187  * ===== Etapa 1: Maximizar Q interno =====
+ 188  Solve MaxRec using MINLP maximizing Qsum;
+ 189   
+ 190  * Capturar el nivel logrado y fijar el RHS de la restricción Hold
+ 191  Scalar QTarget, holdFrac;
+ 192  QTarget  = sum((h,c), Q.l(h,c));
+ 193  holdFrac = 0.98;
+ 194  RHSHold  = holdFrac * QTarget;
+ 195   
+ 196  * ===== Etapa 2: Minimizar costo manteniendo intercambio interno =====
+ 197  Solve Problem2 using MINLP minimizing Cost;
+ 198   
+ 199  * Reporte
+ 200  scalar modelstat1, solvestat1, modelstat2, solvestat2;
+ 201  modelstat1 = MaxRec.modelstat;   solvestat1 = MaxRec.solvestat;
+ 202  modelstat2 = Problem2.modelstat; solvestat2 = Problem2.solvestat;
+ 203  display modelstat1, solvestat1, modelstat2, solvestat2;
+ 204   
+ 205  display Qsum.l, QTarget, holdFrac, RHSHold;
+ 206   
+ 207  display Cost.l, Cost_CAPEX_Fijo.l, Cost_CAPEX_Area.l, Cost_OPEX_Steam.l, Cost_OPEX_CW.l;
+ 208   
+ 209  Scalar MatchesActive;
+ 210  MatchesActive = sum((h,c), z.l(h,c));
+ 211  display MatchesActive;
+ 212   
+ 213  display z.l, Q.l, QSteam.l, QCW.l, A.l;
+
+
+COMPILATION TIME     =        0.031 SECONDS      3 MB  51.4.0 91cb996b WEX-WEI
+GAMS 51.4.0  91cb996b Nov 10, 2025          WEX-WEI x86 64bit/MS Windows - 11/21/25 15:45:27 Page 3
+Problem 2 - HEN Optimization (Biodiesel 10,000 ton/y)
+Range Statistics    SOLVE MaxRec Using MINLP From line 176
+
+
+RANGE STATISTICS (ABSOLUTE NON-ZERO FINITE VALUES)
+
+RHS       [min, max] : [ 2.197E+01, 1.551E+04] - Zero values observed as well
+Bound     [min, max] : [ 5.492E-03, 1.551E+04] - Zero values observed as well
+Matrix    [min, max] : [ 1.250E-04, 1.531E+04]
+
+GAMS 51.4.0  91cb996b Nov 10, 2025          WEX-WEI x86 64bit/MS Windows - 11/21/25 15:45:27 Page 4
+Problem 2 - HEN Optimization (Biodiesel 10,000 ton/y)
+Model Statistics    SOLVE MaxRec Using MINLP From line 176
+
+
+MODEL STATISTICS
+
+BLOCKS OF EQUATIONS          10     SINGLE EQUATIONS          109
+BLOCKS OF VARIABLES           6     SINGLE VARIABLES           57
+NON ZERO ELEMENTS           233     NON LINEAR N-Z              0
+CODE LENGTH                   0     CONSTANT POOL              16     DISCRETE VARIABLES         16
+
+
+GENERATION TIME      =        0.562 SECONDS      4 MB  51.4.0 91cb996b WEX-WEI
+GAMS 51.4.0  91cb996b Nov 10, 2025          WEX-WEI x86 64bit/MS Windows - 11/21/25 15:45:27 Page 5
+Problem 2 - HEN Optimization (Biodiesel 10,000 ton/y)
+Solution Report     SOLVE MaxRec Using MINLP From line 176
+
+
+               S O L V E      S U M M A R Y
+
+     MODEL   MaxRec              OBJECTIVE  Qsum
+     TYPE    MINLP               DIRECTION  MAXIMIZE
+     SOLVER  DICOPT              FROM LINE  176
+
+**** SOLVER STATUS     1 Normal Completion
+**** MODEL STATUS      1 Optimal
+**** OBJECTIVE VALUE            15547.2407
+
+ RESOURCE USAGE, LIMIT          0.016 10000000000.000
+ ITERATION COUNT, LIMIT         2    2147483647
+ EVALUATION ERRORS             NA             0
+-------------------------------------------------------------------------------
+Dicopt 2         51.4.0 91cb996b Nov 10, 2025          WEI x86 64bit/MS Window
+-------------------------------------------------------------------------------
+*** This solver runs with a demo license. No commercial use.
+--- DICOPT: No non-linearities found: executing the MIP solver
+
+      The model is linear (possibly with integer variables).
+      We will call the MIP solver to solve it for you.
+
+      Advice: use a MIP solver to solve this problem.
+*** This solver runs with a demo license. No commercial use.
+--- GMO setup time: 0.00s
+--- GMO memory 0.52 Mb (peak 0.52 Mb)
+--- Dictionary memory 0.00 Mb
+--- Cplex 22.1.2.0 link memory 0.00 Mb (peak 0.01 Mb)
+--- Starting Cplex
+
+
+--- MIP status (101): integer optimal solution.
+--- Cplex Time: 0.02sec (det. 0.26 ticks)
+
+--- Returning a primal only solution to GAMS (marginals all set to NA).
+--- Fixing integer variables and solving final LP...
+
+
+--- Fixed MIP status (1): optimal.
+--- Cplex Time: 0.00sec (det. 0.07 ticks)
+
+
+Proven optimal solution
+MIP Solution:        15547.240667    (2 iterations, 0 nodes)
+Final Solve:         15547.240667    (0 iterations)
+
+Best possible:       15547.240667
+Absolute gap:            0.000000
+Relative gap:            0.000000
+
+
+---- EQU HeatBalance_H  
+
+          LOWER          LEVEL          UPPER         MARGINAL
+
+H1       196.3071       196.3071       196.3071         1.0000      
+H2       477.0000       477.0000       477.0000          .          
+H3       256.0000       256.0000       256.0000         EPS         
+H4     15307.0014     15307.0014     15307.0014         EPS         
+
+---- EQU HeatBalance_C  
+
+          LOWER          LEVEL          UPPER         MARGINAL
+
+C1        43.9322        43.9322        43.9322         EPS         
+C2      2104.0004      2104.0004      2104.0004          .          
+C3        85.0000        85.0000        85.0000         EPS         
+C4     15509.4870     15509.4870     15509.4870         EPS         
+
+---- EQU AreaDef  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1          .              .              .              .          
+H1.C2          .              .              .              .          
+H1.C3          .              .              .             EPS         
+H1.C4          .              .              .             EPS         
+H2.C1          .              .              .              .          
+H2.C2          .              .              .              .          
+H2.C3          .              .              .              .          
+H2.C4          .              .              .              .          
+H3.C1          .              .              .             EPS         
+H3.C2          .              .              .              .          
+H3.C3          .              .              .              .          
+H3.C4          .              .              .              .          
+H4.C1          .              .              .              .          
+H4.C2          .              .              .              .          
+H4.C3          .              .              .              .          
+H4.C4          .              .              .             EPS         
+
+---- EQU Link_Q  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1        -INF             .              .              .          
+H1.C2        -INF             .              .              .          
+H1.C3        -INF             .              .              .          
+H1.C4        -INF          -85.0000          .              .          
+H2.C1        -INF             .              .             1.0000      
+H2.C2        -INF             .              .             1.0000      
+H2.C3        -INF             .              .             1.0000      
+H2.C4        -INF             .              .             1.0000      
+H3.C1        -INF             .              .              .          
+H3.C2        -INF             .              .             1.0000      
+H3.C3        -INF             .              .             1.0000      
+H3.C4        -INF             .              .             1.0000      
+H4.C1        -INF             .              .             1.0000      
+H4.C2        -INF             .              .             1.0000      
+H4.C3        -INF             .              .             1.0000      
+H4.C4        -INF             .              .              .          
+
+---- EQU Link_A  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1        -INF             .              .              .          
+H1.C2        -INF             .              .              .          
+H1.C3        -INF             .              .              .          
+H1.C4        -INF           -0.0106          .              .          
+H2.C1        -INF             .              .              .          
+H2.C2        -INF             .              .              .          
+H2.C3        -INF             .              .              .          
+H2.C4        -INF             .              .              .          
+H3.C1        -INF             .              .              .          
+H3.C2        -INF             .              .              .          
+H3.C3        -INF             .              .              .          
+H3.C4        -INF             .              .              .          
+H4.C1        -INF             .              .              .          
+H4.C2        -INF             .              .              .          
+H4.C3        -INF             .              .              .          
+H4.C4        -INF             .              .              .          
+
+---- EQU NoEmptyMatch  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1          .              .            +INF             .          
+H1.C2          .              .            +INF             .          
+H1.C3          .            84.9990        +INF             .          
+H1.C4          .           111.3061        +INF             .          
+H2.C1          .              .            +INF             .          
+H2.C2          .              .            +INF             .          
+H2.C3          .              .            +INF             .          
+H2.C4          .              .            +INF             .          
+H3.C1          .            43.9312        +INF             .          
+H3.C2          .              .            +INF             .          
+H3.C3          .              .            +INF             .          
+H3.C4          .              .            +INF             .          
+H4.C1          .              .            +INF             .          
+H4.C2          .              .            +INF             .          
+H4.C3          .              .            +INF             .          
+H4.C4          .         15307.0004        +INF             .          
+
+---- EQU FeasHotIn_ColdOut  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1     -1108.0000          .            +INF             .          
+H1.C2      -945.0000          .            +INF             .          
+H1.C3     -1065.0000     -1000.0000        +INF             .          
+H1.C4     -1038.0000     -1000.0000        +INF             .          
+H2.C1     -1023.0000          .            +INF             .          
+H2.C2      -860.0000          .            +INF             .          
+H2.C3      -980.0000          .            +INF             .          
+H2.C4      -953.0000          .            +INF             .          
+H3.C1     -1051.0000     -1000.0000        +INF             .          
+H3.C2      -888.0000          .            +INF             .          
+H3.C3     -1008.0000          .            +INF             .          
+H3.C4      -981.0000          .            +INF             .          
+H4.C1     -1153.0000          .            +INF             .          
+H4.C2      -990.0000          .            +INF             .          
+H4.C3     -1110.0000          .            +INF             .          
+H4.C4     -1083.0000     -1000.0000        +INF             .          
+
+---- EQU FeasHotOut_ColdIn  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1     -1055.0000          .            +INF             .          
+H1.C2      -998.0000          .            +INF             .          
+H1.C3     -1030.0000     -1000.0000        +INF             .          
+H1.C4     -1023.0000     -1000.0000        +INF             .          
+H2.C1     -1015.0000          .            +INF             .          
+H2.C2      -958.0000          .            +INF             .          
+H2.C3      -990.0000          .            +INF             .          
+H2.C4      -983.0000          .            +INF             .          
+H3.C1     -1015.0000     -1000.0000        +INF             .          
+H3.C2      -958.0000          .            +INF             .          
+H3.C3      -990.0000          .            +INF             .          
+H3.C4      -983.0000          .            +INF             .          
+H4.C1     -1047.0000          .            +INF             .          
+H4.C2      -990.0000          .            +INF             .          
+H4.C3     -1022.0000          .            +INF             .          
+H4.C4     -1015.0000     -1000.0000        +INF             .          
+
+---- EQU MinRecPerCold  
+
+          LOWER          LEVEL          UPPER         MARGINAL
+
+C1        21.9661        43.9322        +INF             .          
+C2          .              .            +INF             .          
+C3        76.5000        85.0000        +INF             .          
+C4     14734.0127     15418.3085        +INF             .          
+
+                           LOWER          LEVEL          UPPER         MARGINAL
+
+---- EQU ObjMaxQ             .              .              .             1.0000      
+
+---- VAR Q  Intercambio de calor (kW)
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1          .              .            43.9322         EPS         
+H1.C2          .              .           196.3071         EPS         
+H1.C3          .            85.0000        85.0000         EPS         
+H1.C4          .           111.3071       196.3071          .          
+H2.C1          .              .            43.9322          .          
+H2.C2          .              .           477.0000          .          
+H2.C3          .              .            85.0000          .          
+H2.C4          .              .           477.0000          .          
+H3.C1          .            43.9322        43.9322         1.0000      
+H3.C2          .              .           256.0000          .          
+H3.C3          .              .            85.0000          .          
+H3.C4          .              .           256.0000          .          
+H4.C1          .              .            43.9322          .          
+H4.C2          .              .          2104.0004          .          
+H4.C3          .              .            85.0000          .          
+H4.C4          .         15307.0014     15307.0014         1.0000      
+
+---- VAR A  Área de transferencia (m2)
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1          .              .             0.0055         EPS         
+H1.C2          .              .             0.0245         EPS         
+H1.C3          .             0.0106         0.0106          .          
+H1.C4          .             0.0139         0.0245          .          
+H2.C1          .              .             0.0055         EPS         
+H2.C2          .              .             0.0596         EPS         
+H2.C3          .              .             0.0106         EPS         
+H2.C4          .              .             0.0596         EPS         
+H3.C1          .             0.0055         0.0055          .          
+H3.C2          .              .             0.0320         EPS         
+H3.C3          .              .             0.0106         EPS         
+H3.C4          .              .             0.0320         EPS         
+H4.C1          .              .             0.0055         EPS         
+H4.C2          .              .             0.2630         EPS         
+H4.C3          .              .             0.0106         EPS         
+H4.C4          .             1.9134         1.9134          .          
+
+---- VAR z  Match binario
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1          .              .             1.0000         EPS         
+H1.C2          .              .             1.0000         EPS         
+H1.C3          .             1.0000         1.0000         EPS         
+H1.C4          .             1.0000         1.0000         EPS         
+H2.C1          .              .             1.0000        43.9322      
+H2.C2          .              .             1.0000       477.0000      
+H2.C3          .              .             1.0000        85.0000      
+H2.C4          .              .             1.0000       477.0000      
+H3.C1          .             1.0000         1.0000         EPS         
+H3.C2          .              .             1.0000       256.0000      
+H3.C3          .              .             1.0000        85.0000      
+H3.C4          .              .             1.0000       256.0000      
+H4.C1          .              .             1.0000        43.9322      
+H4.C2          .              .             1.0000      2104.0004      
+H4.C3          .              .             1.0000        85.0000      
+H4.C4          .             1.0000         1.0000         EPS         
+
+---- VAR QSteam  Calentamiento externo frío (kW)
+
+          LOWER          LEVEL          UPPER         MARGINAL
+
+C1          .              .            43.9322          .          
+C2          .          2104.0004      2104.0004         EPS         
+C3          .              .            85.0000          .          
+C4          .            91.1785     15509.4870          .          
+
+---- VAR QCW  Enfriamiento caliente (kW)
+
+          LOWER          LEVEL          UPPER         MARGINAL
+
+H1          .              .           196.3071        -1.0000      
+H2          .           477.0000       477.0000         EPS         
+H3          .           212.0678       256.0000          .          
+H4          .              .         15307.0014          .          
+
+                           LOWER          LEVEL          UPPER         MARGINAL
+
+---- VAR Qsum              -INF        15547.2407        +INF             .          
+
+  Qsum  Suma de intercambio interno (kW)
+
+
+**** REPORT SUMMARY :        0     NONOPT
+                             0 INFEASIBLE
+                             0  UNBOUNDED
+                             0     ERRORS
+GAMS 51.4.0  91cb996b Nov 10, 2025          WEX-WEI x86 64bit/MS Windows - 11/21/25 15:45:27 Page 6
+Problem 2 - HEN Optimization (Biodiesel 10,000 ton/y)
+Range Statistics    SOLVE MaxRec Using MINLP From line 188
+
+
+RANGE STATISTICS (ABSOLUTE NON-ZERO FINITE VALUES)
+
+RHS       [min, max] : [ 2.197E+01, 1.551E+04] - Zero values observed as well
+Bound     [min, max] : [ 5.492E-03, 1.551E+04] - Zero values observed as well
+Matrix    [min, max] : [ 1.250E-04, 1.531E+04]
+
+GAMS 51.4.0  91cb996b Nov 10, 2025          WEX-WEI x86 64bit/MS Windows - 11/21/25 15:45:27 Page 7
+Problem 2 - HEN Optimization (Biodiesel 10,000 ton/y)
+Model Statistics    SOLVE MaxRec Using MINLP From line 188
+
+
+MODEL STATISTICS
+
+BLOCKS OF EQUATIONS          10     SINGLE EQUATIONS          109
+BLOCKS OF VARIABLES           6     SINGLE VARIABLES           57
+NON ZERO ELEMENTS           233     NON LINEAR N-Z              0
+CODE LENGTH                   0     CONSTANT POOL              16     DISCRETE VARIABLES         16
+
+
+GENERATION TIME      =        0.031 SECONDS      4 MB  51.4.0 91cb996b WEX-WEI
+GAMS 51.4.0  91cb996b Nov 10, 2025          WEX-WEI x86 64bit/MS Windows - 11/21/25 15:45:27 Page 8
+Problem 2 - HEN Optimization (Biodiesel 10,000 ton/y)
+Solution Report     SOLVE MaxRec Using MINLP From line 188
+
+
+               S O L V E      S U M M A R Y
+
+     MODEL   MaxRec              OBJECTIVE  Qsum
+     TYPE    MINLP               DIRECTION  MAXIMIZE
+     SOLVER  DICOPT              FROM LINE  188
+
+**** SOLVER STATUS     1 Normal Completion
+**** MODEL STATUS      1 Optimal
+**** OBJECTIVE VALUE            15547.2407
+
+ RESOURCE USAGE, LIMIT          0.000 10000000000.000
+ ITERATION COUNT, LIMIT         2    2147483647
+ EVALUATION ERRORS             NA             0
+-------------------------------------------------------------------------------
+Dicopt 2         51.4.0 91cb996b Nov 10, 2025          WEI x86 64bit/MS Window
+-------------------------------------------------------------------------------
+*** This solver runs with a demo license. No commercial use.
+--- DICOPT: No non-linearities found: executing the MIP solver
+
+      The model is linear (possibly with integer variables).
+      We will call the MIP solver to solve it for you.
+
+      Advice: use a MIP solver to solve this problem.
+*** This solver runs with a demo license. No commercial use.
+--- GMO setup time: 0.00s
+--- GMO memory 0.52 Mb (peak 0.52 Mb)
+--- Dictionary memory 0.00 Mb
+--- Cplex 22.1.2.0 link memory 0.00 Mb (peak 0.01 Mb)
+--- Starting Cplex
+
+
+--- MIP status (101): integer optimal solution.
+--- Cplex Time: 0.00sec (det. 0.26 ticks)
+
+--- Returning a primal only solution to GAMS (marginals all set to NA).
+--- Fixing integer variables and solving final LP...
+
+
+--- Fixed MIP status (1): optimal.
+--- Cplex Time: 0.00sec (det. 0.07 ticks)
+
+
+Proven optimal solution
+MIP Solution:        15547.240667    (2 iterations, 0 nodes)
+Final Solve:         15547.240667    (0 iterations)
+
+Best possible:       15547.240667
+Absolute gap:            0.000000
+Relative gap:            0.000000
+
+
+---- EQU HeatBalance_H  
+
+          LOWER          LEVEL          UPPER         MARGINAL
+
+H1       196.3071       196.3071       196.3071         1.0000      
+H2       477.0000       477.0000       477.0000          .          
+H3       256.0000       256.0000       256.0000         EPS         
+H4     15307.0014     15307.0014     15307.0014         EPS         
+
+---- EQU HeatBalance_C  
+
+          LOWER          LEVEL          UPPER         MARGINAL
+
+C1        43.9322        43.9322        43.9322         EPS         
+C2      2104.0004      2104.0004      2104.0004          .          
+C3        85.0000        85.0000        85.0000         EPS         
+C4     15509.4870     15509.4870     15509.4870         EPS         
+
+---- EQU AreaDef  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1          .              .              .              .          
+H1.C2          .              .              .              .          
+H1.C3          .              .              .             EPS         
+H1.C4          .              .              .             EPS         
+H2.C1          .              .              .              .          
+H2.C2          .              .              .              .          
+H2.C3          .              .              .              .          
+H2.C4          .              .              .              .          
+H3.C1          .              .              .             EPS         
+H3.C2          .              .              .              .          
+H3.C3          .              .              .              .          
+H3.C4          .              .              .              .          
+H4.C1          .              .              .              .          
+H4.C2          .              .              .              .          
+H4.C3          .              .              .              .          
+H4.C4          .              .              .             EPS         
+
+---- EQU Link_Q  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1        -INF             .              .              .          
+H1.C2        -INF             .              .              .          
+H1.C3        -INF             .              .              .          
+H1.C4        -INF          -85.0000          .              .          
+H2.C1        -INF             .              .             1.0000      
+H2.C2        -INF             .              .             1.0000      
+H2.C3        -INF             .              .             1.0000      
+H2.C4        -INF             .              .             1.0000      
+H3.C1        -INF             .              .              .          
+H3.C2        -INF             .              .             1.0000      
+H3.C3        -INF             .              .             1.0000      
+H3.C4        -INF             .              .             1.0000      
+H4.C1        -INF             .              .             1.0000      
+H4.C2        -INF             .              .             1.0000      
+H4.C3        -INF             .              .             1.0000      
+H4.C4        -INF             .              .              .          
+
+---- EQU Link_A  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1        -INF             .              .              .          
+H1.C2        -INF             .              .              .          
+H1.C3        -INF             .              .              .          
+H1.C4        -INF           -0.0106          .              .          
+H2.C1        -INF             .              .              .          
+H2.C2        -INF             .              .              .          
+H2.C3        -INF             .              .              .          
+H2.C4        -INF             .              .              .          
+H3.C1        -INF             .              .              .          
+H3.C2        -INF             .              .              .          
+H3.C3        -INF             .              .              .          
+H3.C4        -INF             .              .              .          
+H4.C1        -INF             .              .              .          
+H4.C2        -INF             .              .              .          
+H4.C3        -INF             .              .              .          
+H4.C4        -INF             .              .              .          
+
+---- EQU NoEmptyMatch  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1          .              .            +INF             .          
+H1.C2          .              .            +INF             .          
+H1.C3          .            84.9990        +INF             .          
+H1.C4          .           111.3061        +INF             .          
+H2.C1          .              .            +INF             .          
+H2.C2          .              .            +INF             .          
+H2.C3          .              .            +INF             .          
+H2.C4          .              .            +INF             .          
+H3.C1          .            43.9312        +INF             .          
+H3.C2          .              .            +INF             .          
+H3.C3          .              .            +INF             .          
+H3.C4          .              .            +INF             .          
+H4.C1          .              .            +INF             .          
+H4.C2          .              .            +INF             .          
+H4.C3          .              .            +INF             .          
+H4.C4          .         15307.0004        +INF             .          
+
+---- EQU FeasHotIn_ColdOut  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1     -1108.0000          .            +INF             .          
+H1.C2      -945.0000          .            +INF             .          
+H1.C3     -1065.0000     -1000.0000        +INF             .          
+H1.C4     -1038.0000     -1000.0000        +INF             .          
+H2.C1     -1023.0000          .            +INF             .          
+H2.C2      -860.0000          .            +INF             .          
+H2.C3      -980.0000          .            +INF             .          
+H2.C4      -953.0000          .            +INF             .          
+H3.C1     -1051.0000     -1000.0000        +INF             .          
+H3.C2      -888.0000          .            +INF             .          
+H3.C3     -1008.0000          .            +INF             .          
+H3.C4      -981.0000          .            +INF             .          
+H4.C1     -1153.0000          .            +INF             .          
+H4.C2      -990.0000          .            +INF             .          
+H4.C3     -1110.0000          .            +INF             .          
+H4.C4     -1083.0000     -1000.0000        +INF             .          
+
+---- EQU FeasHotOut_ColdIn  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1     -1055.0000          .            +INF             .          
+H1.C2      -998.0000          .            +INF             .          
+H1.C3     -1030.0000     -1000.0000        +INF             .          
+H1.C4     -1023.0000     -1000.0000        +INF             .          
+H2.C1     -1015.0000          .            +INF             .          
+H2.C2      -958.0000          .            +INF             .          
+H2.C3      -990.0000          .            +INF             .          
+H2.C4      -983.0000          .            +INF             .          
+H3.C1     -1015.0000     -1000.0000        +INF             .          
+H3.C2      -958.0000          .            +INF             .          
+H3.C3      -990.0000          .            +INF             .          
+H3.C4      -983.0000          .            +INF             .          
+H4.C1     -1047.0000          .            +INF             .          
+H4.C2      -990.0000          .            +INF             .          
+H4.C3     -1022.0000          .            +INF             .          
+H4.C4     -1015.0000     -1000.0000        +INF             .          
+
+---- EQU MinRecPerCold  
+
+          LOWER          LEVEL          UPPER         MARGINAL
+
+C1        21.9661        43.9322        +INF             .          
+C2          .              .            +INF             .          
+C3        76.5000        85.0000        +INF             .          
+C4     14734.0127     15418.3085        +INF             .          
+
+                           LOWER          LEVEL          UPPER         MARGINAL
+
+---- EQU ObjMaxQ             .              .              .             1.0000      
+
+---- VAR Q  Intercambio de calor (kW)
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1          .              .            43.9322         EPS         
+H1.C2          .              .           196.3071         EPS         
+H1.C3          .            85.0000        85.0000         EPS         
+H1.C4          .           111.3071       196.3071          .          
+H2.C1          .              .            43.9322          .          
+H2.C2          .              .           477.0000          .          
+H2.C3          .              .            85.0000          .          
+H2.C4          .              .           477.0000          .          
+H3.C1          .            43.9322        43.9322         1.0000      
+H3.C2          .              .           256.0000          .          
+H3.C3          .              .            85.0000          .          
+H3.C4          .              .           256.0000          .          
+H4.C1          .              .            43.9322          .          
+H4.C2          .              .          2104.0004          .          
+H4.C3          .              .            85.0000          .          
+H4.C4          .         15307.0014     15307.0014         1.0000      
+
+---- VAR A  Área de transferencia (m2)
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1          .              .             0.0055         EPS         
+H1.C2          .              .             0.0245         EPS         
+H1.C3          .             0.0106         0.0106          .          
+H1.C4          .             0.0139         0.0245          .          
+H2.C1          .              .             0.0055         EPS         
+H2.C2          .              .             0.0596         EPS         
+H2.C3          .              .             0.0106         EPS         
+H2.C4          .              .             0.0596         EPS         
+H3.C1          .             0.0055         0.0055          .          
+H3.C2          .              .             0.0320         EPS         
+H3.C3          .              .             0.0106         EPS         
+H3.C4          .              .             0.0320         EPS         
+H4.C1          .              .             0.0055         EPS         
+H4.C2          .              .             0.2630         EPS         
+H4.C3          .              .             0.0106         EPS         
+H4.C4          .             1.9134         1.9134          .          
+
+---- VAR z  Match binario
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1          .              .             1.0000         EPS         
+H1.C2          .              .             1.0000         EPS         
+H1.C3          .             1.0000         1.0000         EPS         
+H1.C4          .             1.0000         1.0000         EPS         
+H2.C1          .              .             1.0000        43.9322      
+H2.C2          .              .             1.0000       477.0000      
+H2.C3          .              .             1.0000        85.0000      
+H2.C4          .              .             1.0000       477.0000      
+H3.C1          .             1.0000         1.0000         EPS         
+H3.C2          .              .             1.0000       256.0000      
+H3.C3          .              .             1.0000        85.0000      
+H3.C4          .              .             1.0000       256.0000      
+H4.C1          .              .             1.0000        43.9322      
+H4.C2          .              .             1.0000      2104.0004      
+H4.C3          .              .             1.0000        85.0000      
+H4.C4          .             1.0000         1.0000         EPS         
+
+---- VAR QSteam  Calentamiento externo frío (kW)
+
+          LOWER          LEVEL          UPPER         MARGINAL
+
+C1          .              .            43.9322          .          
+C2          .          2104.0004      2104.0004         EPS         
+C3          .              .            85.0000          .          
+C4          .            91.1785     15509.4870          .          
+
+---- VAR QCW  Enfriamiento caliente (kW)
+
+          LOWER          LEVEL          UPPER         MARGINAL
+
+H1          .              .           196.3071        -1.0000      
+H2          .           477.0000       477.0000         EPS         
+H3          .           212.0678       256.0000          .          
+H4          .              .         15307.0014          .          
+
+                           LOWER          LEVEL          UPPER         MARGINAL
+
+---- VAR Qsum              -INF        15547.2407        +INF             .          
+
+  Qsum  Suma de intercambio interno (kW)
+
+
+**** REPORT SUMMARY :        0     NONOPT
+                             0 INFEASIBLE
+                             0  UNBOUNDED
+                             0     ERRORS
+GAMS 51.4.0  91cb996b Nov 10, 2025          WEX-WEI x86 64bit/MS Windows - 11/21/25 15:45:27 Page 9
+Problem 2 - HEN Optimization (Biodiesel 10,000 ton/y)
+Range Statistics    SOLVE Problem2 Using MINLP From line 197
+
+
+RANGE STATISTICS (ABSOLUTE NON-ZERO FINITE VALUES)
+
+RHS       [min, max] : [ 2.197E+01, 1.551E+04] - Zero values observed as well
+Bound     [min, max] : [ 5.492E-03, 1.551E+04] - Zero values observed as well
+Matrix    [min, max] : [ 1.250E-04, 7.500E+11]
+
+GAMS 51.4.0  91cb996b Nov 10, 2025          WEX-WEI x86 64bit/MS Windows - 11/21/25 15:45:27 Page 10
+Problem 2 - HEN Optimization (Biodiesel 10,000 ton/y)
+Model Statistics    SOLVE Problem2 Using MINLP From line 197
+
+
+MODEL STATISTICS
+
+BLOCKS OF EQUATIONS          15     SINGLE EQUATIONS          114
+BLOCKS OF VARIABLES          10     SINGLE VARIABLES           61
+NON ZERO ELEMENTS           281     NON LINEAR N-Z             16
+CODE LENGTH                  67     CONSTANT POOL              18     DISCRETE VARIABLES         16
+
+
+GENERATION TIME      =        0.000 SECONDS      4 MB  51.4.0 91cb996b WEX-WEI
+GAMS 51.4.0  91cb996b Nov 10, 2025          WEX-WEI x86 64bit/MS Windows - 11/21/25 15:45:27 Page 11
+Problem 2 - HEN Optimization (Biodiesel 10,000 ton/y)
+Solution Report     SOLVE Problem2 Using MINLP From line 197
+
+
+               S O L V E      S U M M A R Y
+
+     MODEL   Problem2            OBJECTIVE  Cost
+     TYPE    MINLP               DIRECTION  MINIMIZE
+     SOLVER  DICOPT              FROM LINE  197
+
+**** SOLVER STATUS     1 Normal Completion
+**** MODEL STATUS      8 Integer Solution
+**** OBJECTIVE VALUE           769468.5279
+
+ RESOURCE USAGE, LIMIT          1.923 10000000000.000
+ ITERATION COUNT, LIMIT        31    2147483647
+ EVALUATION ERRORS              0             0
+-------------------------------------------------------------------------------
+Dicopt 2         51.4.0 91cb996b Nov 10, 2025          WEI x86 64bit/MS Window
+-------------------------------------------------------------------------------
+*** This solver runs with a demo license. No commercial use.
+--- *** This solver runs with a demo license. No commercial use.
+ 
+ 
+    C O N O P T   version 4.38.2
+    Copyright (C) GAMS Software GmbH
+                  GAMS Development Corporation
+ 
+    Will use up to 4 threads.
+ 
+ 
+    The user model has 114 constraints and 61 variables
+    with 281 Jacobian elements, 16 of which are nonlinear.
+    The Hessian of the Lagrangian has 16 elements on the diagonal,
+    0 elements below the diagonal, and 16 nonlinear variables.
+ 
+    The pre-triangular part of the model has 34 constraints and 0 variables.
+    The post-triangular part of the model has 5 constraints and variables.
+    There are 16 definitional constraints and defined variables.
+ 
+    Preprocessed model has 59 constraints and 40 variables
+    with 162 Jacobian elements, 0 of which are nonlinear.
+ 
+ ** Optimal solution. There are no superbasic variables.
+ 
+ 
+ CONOPT time Total                            0.188 seconds
+   of which: Function evaluations             0.000 =  0.0%
+             1st Derivative evaluations       0.015 =  8.0%
+             Interval derivative evals        0.000 =  0.0%
+ 
+*** This solver runs with a demo license. No commercial use.
+--- GMO setup time: 0.00s
+--- GMO memory 0.52 Mb (peak 0.52 Mb)
+--- Dictionary memory 0.00 Mb
+--- Cplex 22.1.2.0 link memory 0.00 Mb (peak 0.01 Mb)
+--- Starting Cplex
+
+
+--- MIP status (101): integer optimal solution.
+--- Cplex Time: 0.12sec (det. 1.24 ticks)
+
+--- Returning a primal only solution to GAMS (marginals all set to NA).
+--- Fixing integer variables and solving final LP...
+
+
+--- Fixed MIP status (1): optimal.
+--- Cplex Time: 0.00sec (det. 0.13 ticks)
+
+
+Proven optimal solution
+MIP Solution:       808396.519072    (1 iterations, 0 nodes)
+Final Solve:        808396.519077    (0 iterations)
+
+Best possible:      808396.519072
+Absolute gap:            0.000005
+Relative gap:            0.000000
+
+--- DICOPT: Setting up next NLP
+--- *** This solver runs with a demo license. No commercial use.
+ 
+ 
+    C O N O P T   version 4.38.2
+    Copyright (C) GAMS Software GmbH
+                  GAMS Development Corporation
+ 
+    Will use up to 4 threads.
+ 
+ 
+    The user model has 114 constraints and 61 variables
+    with 281 Jacobian elements, 16 of which are nonlinear.
+    The Hessian of the Lagrangian has 16 elements on the diagonal,
+    0 elements below the diagonal, and 16 nonlinear variables.
+ 
+    The pre-triangular part of the model has 100 constraints and 45 variables.
+    The post-triangular part of the model has 13 constraints and variables.
+ 
+    Preprocessed model has 1 constraints and 3 variables
+    with 3 Jacobian elements, 0 of which are nonlinear.
+ 
+ ** Optimal solution. There are no superbasic variables.
+ 
+ 
+ CONOPT time Total                            0.002 seconds
+   of which: Function evaluations             0.000 =  0.0%
+             1st Derivative evaluations       0.002 =100.0%
+             Interval derivative evals        0.000 =  0.0%
+ 
+--- GMO Resort Time 0ms
+*** This solver runs with a demo license. No commercial use.
+--- GMO setup time: 0.00s
+--- GMO memory 0.52 Mb (peak 0.52 Mb)
+--- Dictionary memory 0.00 Mb
+--- Cplex 22.1.2.0 link memory 0.00 Mb (peak 0.01 Mb)
+--- Starting Cplex
+
+
+--- MIP status (101): integer optimal solution.
+--- Cplex Time: 0.20sec (det. 0.45 ticks)
+
+--- Returning a primal only solution to GAMS (marginals all set to NA).
+--- Fixing integer variables and solving final LP...
+
+
+--- Fixed MIP status (1): optimal.
+--- Cplex Time: 0.00sec (det. 0.17 ticks)
+
+
+Proven optimal solution
+MIP Solution:       904396.149108    (10 iterations, 0 nodes)
+Final Solve:        904396.149113    (0 iterations)
+
+Best possible:      904396.149108
+Absolute gap:            0.000005
+Relative gap:            0.000000
+
+--- DICOPT: Setting up next NLP
+--- *** This solver runs with a demo license. No commercial use.
+ 
+ 
+    C O N O P T   version 4.38.2
+    Copyright (C) GAMS Software GmbH
+                  GAMS Development Corporation
+ 
+    Will use up to 4 threads.
+ 
+ 
+    The user model has 114 constraints and 61 variables
+    with 281 Jacobian elements, 16 of which are nonlinear.
+    The Hessian of the Lagrangian has 16 elements on the diagonal,
+    0 elements below the diagonal, and 16 nonlinear variables.
+ 
+    The pre-triangular part of the model has 99 constraints and 43 variables.
+    The post-triangular part of the model has 13 constraints and variables.
+ 
+    Preprocessed model has 2 constraints and 5 variables
+    with 7 Jacobian elements, 0 of which are nonlinear.
+ 
+ ** Optimal solution. There are no superbasic variables.
+ 
+ 
+ CONOPT time Total                            0.000 seconds
+   of which: Function evaluations             0.000 =  0.0%
+             1st Derivative evaluations       0.000 =  0.0%
+             Interval derivative evals        0.000 =  0.0%
+ 
+--- GMO Resort Time 0ms
+*** This solver runs with a demo license. No commercial use.
+--- GMO setup time: 0.00s
+--- GMO memory 0.52 Mb (peak 0.52 Mb)
+--- Dictionary memory 0.00 Mb
+--- Cplex 22.1.2.0 link memory 0.00 Mb (peak 0.01 Mb)
+--- Starting Cplex
+
+
+--- MIP status (101): integer optimal solution.
+--- Cplex Time: 0.01sec (det. 0.49 ticks)
+
+--- Returning a primal only solution to GAMS (marginals all set to NA).
+--- Fixing integer variables and solving final LP...
+
+
+--- Fixed MIP status (1): optimal.
+--- Cplex Time: 0.00sec (det. 0.19 ticks)
+
+
+Proven optimal solution
+MIP Solution:       904396.519052    (12 iterations, 0 nodes)
+Final Solve:        904396.519056    (0 iterations)
+
+Best possible:      904396.519052
+Absolute gap:            0.000004
+Relative gap:            0.000000
+
+--- DICOPT: Setting up next NLP
+--- *** This solver runs with a demo license. No commercial use.
+ 
+ 
+    C O N O P T   version 4.38.2
+    Copyright (C) GAMS Software GmbH
+                  GAMS Development Corporation
+ 
+    Will use up to 4 threads.
+ 
+ 
+    The user model has 114 constraints and 61 variables
+    with 281 Jacobian elements, 16 of which are nonlinear.
+    The Hessian of the Lagrangian has 16 elements on the diagonal,
+    0 elements below the diagonal, and 16 nonlinear variables.
+ 
+    The pre-triangular part of the model has 98 constraints and 43 variables.
+    The post-triangular part of the model has 13 constraints and variables.
+ 
+    Preprocessed model has 3 constraints and 5 variables
+    with 9 Jacobian elements, 0 of which are nonlinear.
+ 
+ ** Optimal solution. There are no superbasic variables.
+ 
+ 
+ CONOPT time Total                            0.000 seconds
+   of which: Function evaluations             0.000 =  0.0%
+             1st Derivative evaluations       0.000 =  0.0%
+             Interval derivative evals        0.000 =  0.0%
+ 
+--- DICOPT: Stopped on NLP worsening
+
+      The search was stopped because the objective function
+      of the NLP subproblems started to deteriorate.
+
+--- DICOPT: Best integer solution found: 769468.527875
+
+---- EQU HeatBalance_H  
+
+          LOWER          LEVEL          UPPER         MARGINAL
+
+H1       196.3071       196.3071       196.3071      -335.5531      
+H2       477.0000       477.0000       477.0000        34.3938      
+H3       256.0000       256.0000       256.0000        34.3938      
+H4     15307.0014     15307.0014     15307.0014        34.3938      
+
+---- EQU HeatBalance_C  
+
+          LOWER          LEVEL          UPPER         MARGINAL
+
+C1        43.9322        43.9322        43.9322       335.5705      
+C2      2104.0004      2104.0004      2104.0004       335.5705      
+C3        85.0000        85.0000        85.0000       335.5705      
+C4     15509.4870     15509.4870     15509.4870       335.5705      
+
+---- EQU AreaDef  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1          .              .              .              .          
+H1.C2          .              .              .              .          
+H1.C3          .              .              .           152.0677      
+H1.C4          .              .              .           139.0186      
+H2.C1          .              .              .              .          
+H2.C2          .              .              .              .          
+H2.C3          .              .              .              .          
+H2.C4          .              .              .              .          
+H3.C1          .              .              .           169.9075      
+H3.C2          .              .              .              .          
+H3.C3          .              .              .              .          
+H3.C4          .              .              .              .          
+H4.C1          .              .              .              .          
+H4.C2          .              .              .              .          
+H4.C3          .              .              .              .          
+H4.C4          .              .              .            52.6976      
+
+---- EQU Link_Q  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1        -INF             .              .            -0.0174      
+H1.C2        -INF             .              .            -0.0174      
+H1.C3        -INF           -8.5000          .              .          
+H1.C4        -INF          -76.5000          .              .          
+H2.C1        -INF             .              .          -369.9643      
+H2.C2        -INF             .              .          -369.9643      
+H2.C3        -INF             .              .          -369.9659      
+H2.C4        -INF             .              .          -369.9643      
+H3.C1        -INF             .              .          -369.9430      
+H3.C2        -INF             .              .          -369.9643      
+H3.C3        -INF             .              .          -369.9659      
+H3.C4        -INF             .              .          -369.9643      
+H4.C1        -INF             .              .          -369.9643      
+H4.C2        -INF             .              .          -369.9643      
+H4.C3        -INF             .              .          -369.9659      
+H4.C4        -INF             .              .          -369.9577      
+
+---- EQU Link_A  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1        -INF             .              .              .          
+H1.C2        -INF             .              .              .          
+H1.C3        -INF           -0.0011          .              .          
+H1.C4        -INF           -0.0096          .              .          
+H2.C1        -INF             .              .              .          
+H2.C2        -INF             .              .              .          
+H2.C3        -INF             .              .              .          
+H2.C4        -INF             .              .              .          
+H3.C1        -INF             .              .              .          
+H3.C2        -INF             .              .              .          
+H3.C3        -INF             .              .              .          
+H3.C4        -INF             .              .              .          
+H4.C1        -INF             .              .              .          
+H4.C2        -INF             .              .              .          
+H4.C3        -INF             .              .              .          
+H4.C4        -INF             .              .              .          
+
+---- EQU NoEmptyMatch  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1          .              .            +INF             .          
+H1.C2          .              .            +INF             .          
+H1.C3          .            76.4990        +INF             .          
+H1.C4          .           119.8061        +INF             .          
+H2.C1          .              .            +INF             .          
+H2.C2          .              .            +INF             .          
+H2.C3          .              .            +INF             .          
+H2.C4          .              .            +INF             .          
+H3.C1          .            43.9312        +INF             .          
+H3.C2          .              .            +INF             .          
+H3.C3          .              .            +INF             .          
+H3.C4          .              .            +INF             .          
+H4.C1          .              .            +INF             .          
+H4.C2          .              .            +INF             .          
+H4.C3          .              .            +INF             .          
+H4.C4          .         15307.0004        +INF             .          
+
+---- EQU FeasHotIn_ColdOut  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1     -1108.0000          .            +INF             .          
+H1.C2      -945.0000          .            +INF             .          
+H1.C3     -1065.0000     -1000.0000        +INF             .          
+H1.C4     -1038.0000     -1000.0000        +INF             .          
+H2.C1     -1023.0000          .            +INF             .          
+H2.C2      -860.0000          .            +INF             .          
+H2.C3      -980.0000          .            +INF             .          
+H2.C4      -953.0000          .            +INF             .          
+H3.C1     -1051.0000     -1000.0000        +INF             .          
+H3.C2      -888.0000          .            +INF             .          
+H3.C3     -1008.0000          .            +INF             .          
+H3.C4      -981.0000          .            +INF             .          
+H4.C1     -1153.0000          .            +INF             .          
+H4.C2      -990.0000          .            +INF             .          
+H4.C3     -1110.0000          .            +INF             .          
+H4.C4     -1083.0000     -1000.0000        +INF             .          
+
+---- EQU FeasHotOut_ColdIn  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1     -1055.0000          .            +INF             .          
+H1.C2      -998.0000          .            +INF             .          
+H1.C3     -1030.0000     -1000.0000        +INF             .          
+H1.C4     -1023.0000     -1000.0000        +INF             .          
+H2.C1     -1015.0000          .            +INF             .          
+H2.C2      -958.0000          .            +INF             .          
+H2.C3      -990.0000          .            +INF             .          
+H2.C4      -983.0000          .            +INF             .          
+H3.C1     -1015.0000     -1000.0000        +INF             .          
+H3.C2      -958.0000          .            +INF             .          
+H3.C3      -990.0000          .            +INF             .          
+H3.C4      -983.0000          .            +INF             .          
+H4.C1     -1047.0000          .            +INF             .          
+H4.C2      -990.0000          .            +INF             .          
+H4.C3     -1022.0000          .            +INF             .          
+H4.C4     -1015.0000     -1000.0000        +INF             .          
+
+---- EQU MinRecPerCold  
+
+          LOWER          LEVEL          UPPER         MARGINAL
+
+C1        21.9661        43.9322        +INF             .          
+C2          .              .            +INF             .          
+C3        76.5000        76.5000        +INF            0.0016      
+C4     14734.0127     15426.8085        +INF             .          
+
+                           LOWER          LEVEL          UPPER         MARGINAL
+
+---- EQU DefCost_C~          .              .              .             1.0000      
+---- EQU DefCost_C~          .              .              .             1.0000      
+---- EQU DefCost_O~          .              .              .             1.0000      
+---- EQU DefCost_O~          .              .              .             1.0000      
+---- EQU Objective           .              .              .             1.0000      
+---- EQU HoldInter~     15236.2959     15547.2407        +INF             .          
+
+---- VAR Q  Intercambio de calor (kW)
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1          .              .            43.9322          .          
+H1.C2          .              .           196.3071          .          
+H1.C3          .            76.5000        85.0000          .          
+H1.C4          .           119.8071       196.3071          .          
+H2.C1          .              .            43.9322          .          
+H2.C2          .              .           477.0000          .          
+H2.C3          .              .            85.0000          .          
+H2.C4          .              .           477.0000          .          
+H3.C1          .            43.9322        43.9322          .          
+H3.C2          .              .           256.0000          .          
+H3.C3          .              .            85.0000          .          
+H3.C4          .              .           256.0000          .          
+H4.C1          .              .            43.9322          .          
+H4.C2          .              .          2104.0004          .          
+H4.C3          .              .            85.0000          .          
+H4.C4          .         15307.0014     15307.0014          .          
+
+---- VAR A  Área de transferencia (m2)
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1          .              .             0.0055   7.500000E+11      
+H1.C2          .              .             0.0245   7.500000E+11      
+H1.C3          .             0.0096         0.0106          .          
+H1.C4          .             0.0150         0.0245          .          
+H2.C1          .              .             0.0055   7.500000E+11      
+H2.C2          .              .             0.0596   7.500000E+11      
+H2.C3          .              .             0.0106   7.500000E+11      
+H2.C4          .              .             0.0596   7.500000E+11      
+H3.C1          .             0.0055         0.0055          .          
+H3.C2          .              .             0.0320   7.500000E+11      
+H3.C3          .              .             0.0106   7.500000E+11      
+H3.C4          .              .             0.0320   7.500000E+11      
+H4.C1          .              .             0.0055   7.500000E+11      
+H4.C2          .              .             0.2630   7.500000E+11      
+H4.C3          .              .             0.0106   7.500000E+11      
+H4.C4          .             1.9134         1.9134          .          
+
+---- VAR z  Match binario
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+H1.C1          .              .             1.0000      2249.2366      
+H1.C2          .              .             1.0000      2246.5887      
+H1.C3          .             1.0000         1.0000      2250.0000      
+H1.C4          .             1.0000         1.0000      2250.0000      
+H2.C1          .              .             1.0000    -14003.3417      
+H2.C2          .              .             1.0000   -174222.9610      
+H2.C3          .              .             1.0000    -29197.1024      
+H2.C4          .              .             1.0000   -174222.9610      
+H3.C1          .             1.0000         1.0000    -14002.4087      
+H3.C2          .              .             1.0000    -92460.8584      
+H3.C3          .              .             1.0000    -29197.1024      
+H3.C4          .              .             1.0000    -92460.8584      
+H4.C1          .              .             1.0000    -14003.3417      
+H4.C2          .              .             1.0000   -776155.0056      
+H4.C3          .              .             1.0000    -29197.1024      
+H4.C4          .             1.0000         1.0000   -5.660693E+6      
+
+---- VAR QSteam  Calentamiento externo frío (kW)
+
+          LOWER          LEVEL          UPPER         MARGINAL
+
+C1          .              .            43.9322          .          
+C2          .          2104.0004      2104.0004          .          
+C3          .             8.5000        85.0000          .          
+C4          .            82.6785     15509.4870          .          
+
+---- VAR QCW  Enfriamiento caliente (kW)
+
+          LOWER          LEVEL          UPPER         MARGINAL
+
+H1          .              .           196.3071       369.9469      
+H2          .           477.0000       477.0000          .          
+H3          .           212.0678       256.0000          .          
+H4          .              .         15307.0014          .          
+
+                           LOWER          LEVEL          UPPER         MARGINAL
+
+---- VAR Cost              -INF       769468.5279        +INF             .          
+---- VAR Cost_CAPE~        -INF         9000.0000        +INF             .          
+---- VAR Cost_CAPE~        -INF          131.6244        +INF             .          
+---- VAR Cost_OPEX~        -INF       736637.2366        +INF             .          
+---- VAR Cost_OPEX~        -INF        23699.6669        +INF             .          
+
+  Cost  Costo total (USD)*año^-1)
+  Cost_CAPEX_Fijo  Componente CAPEX fijo (USD*año^-1)
+  Cost_CAPEX_Area  Componente CAPEX por área (USD*año^-1)
+  Cost_OPEX_Steam  Componente OPEX vapor (USD*año^-1)
+  Cost_OPEX_CW  Componente OPEX agua (USD*año^-1)
+
+
+**** REPORT SUMMARY :        0     NONOPT
+                             0 INFEASIBLE
+                             0  UNBOUNDED
+                             0     ERRORS
+GAMS 51.4.0  91cb996b Nov 10, 2025          WEX-WEI x86 64bit/MS Windows - 11/21/25 15:45:27 Page 12
+Problem 2 - HEN Optimization (Biodiesel 10,000 ton/y)
+E x e c u t i o n
+
+
+----    203 PARAMETER modelstat1           =        1.000  
+            PARAMETER solvestat1           =        1.000  
+            PARAMETER modelstat2           =        8.000  
+            PARAMETER solvestat2           =        1.000  
+
+----    205 VARIABLE Qsum.L                =    15547.241  Suma de intercambio interno (kW)
+            PARAMETER QTarget              =    15547.241  
+            PARAMETER holdFrac             =        0.980  
+            PARAMETER RHSHold              =    15236.296  
+
+----    207 VARIABLE Cost.L                =   769468.528  Costo total (USD)*año^-1)
+            VARIABLE Cost_CAPEX_Fijo.L     =     9000.000  Componente CAPEX fijo (USD*año^-1)
+            VARIABLE Cost_CAPEX_Area.L     =      131.624  Componente CAPEX por área (USD*año^-1)
+            VARIABLE Cost_OPEX_Steam.L     =   736637.237  Componente OPEX vapor (USD*año^-1)
+            VARIABLE Cost_OPEX_CW.L        =    23699.667  Componente OPEX agua (USD*año^-1)
+
+----    211 PARAMETER MatchesActive        =        4.000  
+
+----    213 VARIABLE z.L  Match binario
+
+            C1          C3          C4
+
+H1                   1.000       1.000
+H3       1.000
+H4                               1.000
+
+
+----    213 VARIABLE Q.L  Intercambio de calor (kW)
+
+            C1          C3          C4
+
+H1                  76.500     119.807
+H3      43.932
+H4                           15307.001
+
+
+----    213 VARIABLE QSteam.L  Calentamiento externo frío (kW)
+
+C2 2104.000,    C3    8.500,    C4   82.679
+
+
+----    213 VARIABLE QCW.L  Enfriamiento caliente (kW)
+
+H2 477.000,    H3 212.068
+
+
+----    213 VARIABLE A.L  Área de transferencia (m2)
+
+            C1          C3          C4
+
+H1                   0.010       0.015
+H3       0.005
+H4                               1.913
+
+
+
+EXECUTION TIME       =        4.094 SECONDS      4 MB  51.4.0 91cb996b WEX-WEI
+
+
+USER: GAMS Demo, for EULA and demo limitations see   G250826+0003Cc-GEN
+      https://www.gams.com/latest/docs/UG%5FLicense.html         DC0000
+
+
+**** FILE SUMMARY
+
+Input      D:\Universidad ECCI\8 SEMESTRE\Optimizaci�n de Procesos\C�digos\Problem_2_.gms
+Output     D:\Universidad ECCI\8 SEMESTRE\Optimizaci�n de Procesos\C�digos\Problem_2_.lst
