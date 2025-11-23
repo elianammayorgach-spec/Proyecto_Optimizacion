@@ -19,6 +19,7 @@ Proyecto/
 │
 ├── 114479_Informe_Tecnico.pdf
 ├── README.txt
+├── 114479_Presentacion.pptx
 │
 ├── Problema 1/
 │ ├── Problem_1.py
@@ -39,7 +40,7 @@ Proyecto/
 ├── Diagrama de Flujo de Proceso.pdf
 
 
-2. LIBRERÍAS NECESARIAS (PYTHON)
+3. LIBRERÍAS NECESARIAS (PYTHON)
 
 Numericas y Científicas:
 
