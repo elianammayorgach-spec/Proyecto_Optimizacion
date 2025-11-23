@@ -19,6 +19,7 @@ Proyecto/
 │
 ├── 114479_Informe_Tecnico.pdf
 ├── README.txt
+├── 114479_Presentacion.pptx
 │
 ├── Problema 1/
 │ ├── Problem_1.py
@@ -172,5 +173,6 @@ NOTAS IMPORTANTES
 - Si GAMS muestra errores de licencia, verificar solvers habilitados.
 
 SOPORTE
+
 
 Para dudas o mejoras relacionadas con el proyecto, escribe al correro: elianam.mayorgach@ecci.edu.co
